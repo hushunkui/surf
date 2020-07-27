@@ -34,24 +34,23 @@ entity Pgp3TxProtocolLite is
 
    generic (
       TPD_G          : time                  := 1 ns;
-      NUM_VC_G       : integer range 1 to 16 := 1;
-      SKIP_EN_G      : boolean               := false;
-      FLOW_CTRL_EN_G : boolean               := false;
-      STARTUP_HOLD_G : integer               := 0);
+      NUM_VC_G       : integer range 1 to 16 := 4;
+      STARTUP_HOLD_G : integer               := 1000);
    port (
       -- User Transmit interface
       pgpTxClk    : in  sl;
       pgpTxRst    : in  sl;
       pgpTxIn     : in  Pgp3TxInType := PGP3_TX_IN_INIT_C;
       pgpTxOut    : out Pgp3TxOutType;
+      pgpTxActive : in  sl           := '1';
       pgpTxMaster : in  AxiStreamMasterType;
       pgpTxSlave  : out AxiStreamSlaveType;
 
       -- Status of local receive fifos
       -- These get synchronized by the Pgp3Tx parent
-      locRxFifoCtrl  : in AxiStreamCtrlArray(NUM_VC_G-1 downto 0) := (others => AXI_STREAM_CTRL_UNUSED_C);
-      locRxLinkReady : in sl                                      := '1';
-      remRxLinkReady : in sl                                      := '1';
+      locRxFifoCtrl  : in AxiStreamCtrlArray(NUM_VC_G-1 downto 0);
+      locRxLinkReady : in sl;
+      remRxLinkReady : in sl;
 
       -- Output Interface
       phyTxActive  : in  sl;
@@ -70,7 +69,7 @@ architecture rtl of Pgp3TxProtocolLite is
       crcDataValid      : sl;
       waitSof           : sl;
       doEof             : sl;
-      tUserLast         : slv(1 downto 0);
+      sofTxn            : AxiStreamMasterType;
       pauseDly          : slv(NUM_VC_G-1 downto 0);
       pauseEvent        : slv(NUM_VC_G-1 downto 0);
       pauseEventSent    : slv(NUM_VC_G-1 downto 0);
@@ -96,7 +95,7 @@ architecture rtl of Pgp3TxProtocolLite is
       crcDataValid      => '0',
       waitSof           => '1',
       doEof             => '0',
-      tUserLast         => (others => '0'),
+      sofTxn => AXI_STREAM_MASTER_INIT_C,
       pauseDly          => (others => '0'),
       pauseEvent        => (others => '0'),
       pauseEventSent    => (others => '0'),
@@ -141,11 +140,11 @@ begin
          crcReset     => rin.crcReset);
 
 
-   comb : process (crcOut, locRxFifoCtrl, locRxLinkReady, pgpTxIn, pgpTxMaster, pgpTxRst,
-                   phyTxActive, protTxReady, r, remRxLinkReady) is
+   comb : process (locRxFifoCtrl, locRxLinkReady, pgpTxIn, pgpTxMaster, pgpTxRst, phyTxActive,
+                   protTxReady, r, remRxLinkReady) is
       variable v                  : RegType;
       variable linkInfo           : slv(39 downto 0);
-      variable dataEn             : sl;
+      variable flowCtrlNotPaused             : sl;
       variable rxFifoCtrl         : AxiStreamCtrlArray(NUM_VC_G-1 downto 0);
       variable resetEventMetaData : boolean;
    begin
@@ -157,73 +156,64 @@ begin
       rxFifoCtrl         := locRxFifoCtrl;
 
       -- Detect 0->1 edges on locRxFifoCtrl(i).pause and locRxFifoCtrl(i).overflow
-      if (FLOW_CTRL_EN_G) then
-         for i in NUM_VC_G-1 downto 0 loop
-            -- Save last value for edge detection
-            v.pauseDly(i)    := locRxFifoCtrl(i).pause;
-            v.overflowDly(i) := locRxFifoCtrl(i).overflow;
+      for i in NUM_VC_G-1 downto 0 loop
+         -- Save last value for edge detection
+         v.pauseDly(i)    := locRxFifoCtrl(i).pause;
+         v.overflowDly(i) := locRxFifoCtrl(i).overflow;
 
-            -- Check for rising edge on pause
-            if (locRxFifoCtrl(i).pause = '1') and (r.pauseDly(i) = '0') then
-               v.pauseEvent(i) := '1';
-            end if;
+         -- Check for rising edge on pause
+         if (locRxFifoCtrl(i).pause = '1') and (r.pauseDly(i) = '0') then
+            v.pauseEvent(i) := '1';
+         end if;
 
-            -- Check for rising edge on overflow
-            if (locRxFifoCtrl(i).overflow = '1') and (r.overflowDly(i) = '0') then
-               v.overflowEvent(i) := '1';
-            end if;
+         -- Check for rising edge on overflow
+         if (locRxFifoCtrl(i).overflow = '1') and (r.overflowDly(i) = '0') then
+            v.overflowEvent(i) := '1';
+         end if;
 
-            -- Include the pauseEvent or overflowEvent in the linkInfo message
-            rxFifoCtrl(i).pause    := r.pauseEvent(i) or locRxFifoCtrl(i).pause;
-            rxFifoCtrl(i).overflow := r.overflowEvent(i) or locRxFifoCtrl(i).overflow;
-         end loop;
-      end if;
+         -- Include the pauseEvent or overflowEvent in the linkInfo message
+         rxFifoCtrl(i).pause    := r.pauseEvent(i) or locRxFifoCtrl(i).pause;
+         rxFifoCtrl(i).overflow := r.overflowEvent(i) or locRxFifoCtrl(i).overflow;
+      end loop;
 
       -- Generate the link information message
       linkInfo := pgp3MakeLinkInfo(rxFifoCtrl, locRxLinkReady);
 
-      if (SKIP_EN_G) then
-         -- Keep delay copy of skip interval configuration
-         v.skpInterval := pgpTxIn.skpInterval;
+      -- Keep delay copy of skip interval configuration
+      v.skpInterval := pgpTxIn.skpInterval;
 
-         -- Check for change in configuration
-         if (r.skpInterval /= v.skpInterval) then
-            -- Force a skip
-            v.skpCount := v.skpInterval;
-         -- Check for counter roll over
-         elsif (r.skpCount /= r.skpInterval) then
-            -- Increment the counter
-            v.skpCount := r.skpCount + 1;
-         end if;
+      -- Check for change in configuration
+      if (r.skpInterval /= v.skpInterval) then
+         -- Force a skip
+         v.skpCount := v.skpInterval;
+      -- Check for counter roll over
+      elsif (r.skpCount /= r.skpInterval) then
+         -- Increment the counter
+         v.skpCount := r.skpCount + 1;
       end if;
 
       -- Don't accept new frame data by default
       v.pgpTxSlave.tReady := '0';
       v.opCodeReady       := '0';
 
-      v.frameTx      := '0';
-      v.frameTxErr   := '0';
-      v.crcReset     := '0';
-      v.crcDataValid := '0';
+      v.frameTx    := '0';
+      v.frameTxErr := '0';
+      v.crcReset   := '0';
 
       -- Check the handshaking
       if (protTxReady = '1') then
          v.protTxValid := '0';
       end if;
 
-      dataEn := ite(pgpTxIn.flowCntlDis = '1' or FLOW_CTRL_EN_G = false, r.linkReady, remRxLinkReady);
-      if (STARTUP_HOLD_G = 0 and FLOW_CTRL_EN_G = false) then
-         dataEn := '1';
-      end if;
+      flowCtrlNotPaused := ite(pgpTxIn.flowCntlDis = '1', r.linkReady, remRxLinkReady);
 
       if (v.protTxValid = '0' and phyTxActive = '1') then
 
          -- Send only IDLE and SKP for STARTUP_HOLD_G cycles after reset
-         if (r.startupCount = STARTUP_HOLD_G or STARTUP_HOLD_G = 0) then
+         if (r.startupCount = STARTUP_HOLD_G) then
             -- Set the flags
             v.linkReady   := '1';
             v.protTxStart := '1';
-            v.protTxValid := '1';
          else
             -- Increment the counter
             v.startupCount := r.startupCount + 1;
@@ -243,11 +233,19 @@ begin
          --                   Header and Data and Footer                   --
          --------------------------------------------------------------------
          -- Send data if there is data to send
-         if (dataEn = '1') then
+         if (flowCtrlNotPaused = '1' and (pgpTxActive = '1' or r.sofTxn.tValid = '1')) then
             -- Update the flag
             resetEventMetaData := false;
 
-            if (pgpTxMaster.tValid = '1') then
+            if (r.sofTxn.tValid = '1') then
+               -- We have sent and SOF and now need to send the stored SOF data
+               v.pgpTxSlave.tReady := '0';  -- Don't accept new data, already have it stored
+               v.protTxData(63 downto 0) := r.sofTxn.tData(63 downto 0);
+               v.protTxHeader := PGP3_D_HEADER_C;
+               v.crcDataValid := '1';
+               -- Technically could have a 1 word frame
+
+            elsif (pgpTxMaster.tValid = '1') then
                if (r.waitSof = '1' and ssiGetUserSof(PGP3_AXIS_CONFIG_C, pgpTxMaster) = '1') then
                   -- Note: The correct way to do this is to accept the SOF txn and store it locally,
                   -- but cheating is faster.
@@ -258,10 +256,11 @@ begin
                   v.protTxData(PGP3_SOFC_VC_FIELD_C)  := pgpTxMaster.tDest(3 downto 0);  -- Virtual Channel
                   v.protTxData(PGP3_SOFC_SEQ_FIELD_C) := (others => '0');
                   v.protTxHeader                      := PGP3_K_HEADER_C;
+                  v.sofTxn := pgpTxMaster;  -- Save the txn data to send next
 
                   v.crcReset := '1';
                   v.waitSof  := '0';
-
+ 
                elsif (r.waitSof = '0') then
                   -- Normal data
                   -- Accept the data
@@ -271,9 +270,9 @@ begin
                   v.crcDataValid            := '1';
                   if (pgpTxMaster.tLast = '1') then
                      v.doEof      := '1';
-                     v.tUserLast  := pgpTxMaster.tUser(15 downto 14);
+                     v.tUserLast  := axiStreamGetUserField(PGP3_AXIS_CONFIG_C, pgpTxMaster);
                      v.frameTx    := '1';
-                     v.frameTxErr := v.frameTx and pgpTxMaster.tUser(14);
+                     v.frameTxErr := v.frameTx and ssiGetUserEofe(PGP3_AXIS_CONFIG_C, pgpTxMaster);
                   end if;
                end if;
             end if;
@@ -284,7 +283,7 @@ begin
          --------------------------------------------------------------------
 
          -- USER codes override data and delay SKP if they happen to coincide
-         if (pgpTxIn.opCodeEn = '1' and dataEn = '1') then
+         if (pgpTxIn.opCodeEn = '1' and flowCtrlNotPaused = '1') then
             -- Override any data acceptance.
             v.pgpTxSlave.tReady := '0';
             -- Accept the op-code
@@ -298,7 +297,7 @@ begin
 
             resetEventMetaData := false;
 
-         elsif (r.skpCount = r.skpInterval and r.skpInterval /= 0 and SKIP_EN_G) then
+         elsif (r.skpCount = r.skpInterval and r.skpInterval /= 0) then
             -- SKIP codes override data               
             v.skpCount                           := (others => '0');
             v.pgpTxSlave.tReady                  := '0';        -- Override any data acceptance.
@@ -306,13 +305,13 @@ begin
             v.protTxData(PGP3_BTF_FIELD_C)       := PGP3_SKP_C;
             v.protTxHeader                       := PGP3_K_HEADER_C;
             resetEventMetaData                   := false;
-         elsif (r.doEof = '1' and dataEn = '1') then
+         elsif (r.doEof = '1' and flowCtrlNotPaused = '1') then
             -- EOF has priority over pause in this implementation just because its easier to code
             -- and only makes a 1 cycle difference in latency
             v.pgpTxSlave.tReady                        := '0';  -- Hold incomming data to send EOF
             v.protTxData                               := (others => '0');
             v.protTxData(PGP3_BTF_FIELD_C)             := PGP3_EOF_C;
-            v.protTxData(PGP3_EOFC_TUSER_FIELD_C)      := "000000" & r.tUserLast;
+            v.protTxData(PGP3_EOFC_TUSER_FIELD_C)      := r.tUserLast;
             v.protTxData(PGP3_EOFC_BYTES_LAST_FIELD_C) := X"8";    -- Last byte count
             v.protTxData(PGP3_EOFC_CRC_FIELD_C)        := crcOut;  -- CRC
             v.protTxHeader                             := PGP3_K_HEADER_C;
@@ -322,7 +321,7 @@ begin
             -- Reset the metadata
             resetEventMetaData                         := true;
 
-         elsif (FLOW_CTRL_EN_G) then
+         else
             -- A local rx pause going high causes an IDLE char to be sent mid frame
             -- So that the sending end is notified with minimum latency
             for i in NUM_VC_G-1 downto 0 loop
@@ -383,7 +382,7 @@ begin
       pgpTxOut.frameTxErr  <= r.frameTxErr;
       pgpTxOut.opCodeReady <= v.opCodeReady;
 
-      crcIn <= endianSwap(pgpTxMaster.tData(63 downto 0));
+      crcIn <= endianSwap(v.pgpTxMaster.tData(63 downto 0));
 
       for i in 15 downto 0 loop
          if (i < NUM_VC_G) then
