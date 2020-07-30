@@ -560,7 +560,7 @@ begin
    
    RstSync_1 : entity surf.RstSync
    generic map (
-      TPD_G    => TPD_G,
+      TPD_G    => TPD_G
    )
    port map (
       clk      => adcBitClkDiv7,
