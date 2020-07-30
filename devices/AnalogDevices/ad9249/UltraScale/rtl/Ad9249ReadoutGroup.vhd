@@ -179,7 +179,9 @@ architecture rtl of Ad9249ReadoutGroup is
    
    signal slipSync      : slv(3 downto 0);
    
+   attribute KEEP_HIERARCHY                     : string;
    attribute KEEP_HIERARCHY of AdcClk_I_Ibufds  : label is "TRUE";
+   attribute dont_touch                         : string;
    attribute dont_touch of adcDclk              : signal is "TRUE";
 
 begin
