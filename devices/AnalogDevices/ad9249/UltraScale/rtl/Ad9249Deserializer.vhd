@@ -53,9 +53,9 @@ entity Ad9249Deserializer is
       loadDelay     : in  sl;
       delay         : in  slv(8 downto 0) := "000000000";
       delayValueOut : out slv(8 downto 0);
-      bitSlip       : in  slv(3 downto 0) := "0000";
-      gearboxOffset : in  slv(2 downto 0) := "000";
-      adcData       : out slv(13 downto 0)
+      bitSlip       : in  slv(3 downto 0) := "0000";        -- dClkDiv4 domain
+      gearboxOffset : in  slv(2 downto 0) := "000";         -- dClkDiv7 domain
+      adcData       : out slv(13 downto 0)                  -- dClkDiv7 domain
       );
 end Ad9249Deserializer;
 

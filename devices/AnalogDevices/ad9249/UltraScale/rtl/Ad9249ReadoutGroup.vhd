@@ -53,7 +53,7 @@ entity Ad9249ReadoutGroup is
       axilReadMaster  : in  AxiLiteReadMasterType;
       axilReadSlave   : out AxiLiteReadSlaveType;
 
-      -- Reset for adc deserializer
+      -- Reset for adc deserializer (axilClk domain)
       adcClkRst : in sl;
 
       -- Serial Data from ADC
@@ -141,6 +141,7 @@ architecture rtl of Ad9249ReadoutGroup is
    signal adcBitRstDiv7 : sl;
    signal adcBitRstDiv4 : sl;
    signal adcBitRst     : sl;
+   signal adcClkRstSync : sl;
 
    signal adcFramePad   : sl;
    signal adcFrame      : slv(13 downto 0);
@@ -165,6 +166,8 @@ architecture rtl of Ad9249ReadoutGroup is
    signal frameDelaySet : sl;
    
    signal invertSync    : sl;
+   
+   signal slipSync      : slv(3 downto 0);
 
    attribute keep of adcBitClkDiv4 : signal is "true";
    attribute keep of adcBitClkDiv7 : signal is "true";
@@ -346,7 +349,7 @@ begin
         )
          port map(
             clkIn     => adcBitClkIn,
-            rstIn     => adcClkRst,
+            rstIn     => '0',
             clkOut(0) => adcBitClk,
             clkOut(1) => adcBitClkDiv4,
             clkOut(2) => adcBitClkDiv7,
@@ -403,7 +406,7 @@ begin
          loadDelay     => frameDelaySet,
          delay         => frameDelay,
          delayValueOut => curDelayFrame,
-         bitSlip       => adcR.slip,
+         bitSlip       => slipSync,
          gearboxOffset => adcR.gearboxOffset,
          adcData       => adcFrame
          );
@@ -454,7 +457,7 @@ begin
             loadDelay     => dataDelaySet(i),
             delay         => dataDelay(i),
             delayValueOut => curDelayData(i),
-            bitSlip       => adcR.slip,
+            bitSlip       => slipSync,
             gearboxOffset => adcR.gearboxOffset,
             adcData       => adcData(i)
             );
@@ -531,14 +534,39 @@ begin
 
    end process adcComb;
 
-   adcSeq : process (adcBitClkDiv7, adcBitRstDiv7) is
+   adcSeq : process (adcBitClkDiv7) is
    begin
-      if (adcBitRstDiv7 = '1') then
-         adcR <= ADC_REG_INIT_C after TPD_G;
-      elsif (rising_edge(adcBitClkDiv7)) then
-         adcR <= adcRin after TPD_G;
+      if (rising_edge(adcBitClkDiv7)) then
+         if (adcBitRstDiv7 = '1' or adcClkRstSync = '1') then
+            adcR <= ADC_REG_INIT_C after TPD_G;
+         else
+            adcR <= adcRin after TPD_G;
+         end if;
       end if;
    end process adcSeq;
+   
+   
+   SynchronizerVec_2 : entity surf.SynchronizerVector
+   generic map (
+      TPD_G    => TPD_G,
+      WIDTH_G  => 4
+   )
+   port map (
+      clk      => adcBitClkDiv4,
+      rst      => adcBitRstDiv4,
+      dataIn   => adcR.slip,
+      dataOut  => slipSync
+   ); 
+   
+   RstSync_1 : entity surf.RstSync
+   generic map (
+      TPD_G    => TPD_G,
+   )
+   port map (
+      clk      => adcBitClkDiv7,
+      asyncRst => adcClkRst,
+      syncRst  => adcClkRstSync
+   );
 
    -- Flatten fifoWrData onto fifoDataIn for FIFO
    -- Regroup fifoDataOut by channel into fifoDataTmp
