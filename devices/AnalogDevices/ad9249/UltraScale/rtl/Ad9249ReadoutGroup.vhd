@@ -134,12 +134,13 @@ architecture rtl of Ad9249ReadoutGroup is
 
 
    -- Local Signals
-   signal adcBitClkIoIn : sl;
-   signal adcBitClkIo   : sl;
-   signal adcBitClkR    : sl;
-   signal adcBitClkRD4  : sl;
+   signal adcBitClkIn   : sl;
+   signal adcBitClk     : sl;
+   signal adcBitClkDiv7 : sl;
+   signal adcBitClkDiv4 : sl;
+   signal adcBitRstDiv7 : sl;
+   signal adcBitRstDiv4 : sl;
    signal adcBitRst     : sl;
-   signal adcBitIoRst   : sl;
 
    signal adcFramePad   : sl;
    signal adcFrame      : slv(13 downto 0);
@@ -165,11 +166,11 @@ architecture rtl of Ad9249ReadoutGroup is
    
    signal invertSync    : sl;
 
-   attribute keep of adcBitClkRD4 : signal is "true";
-   attribute keep of adcBitClkR   : signal is "true";
-   attribute keep of adcFrame     : signal is "true";
-   attribute keep of adcBitClkIo  : signal is "true";
-   attribute keep of adcR         : signal is "true";
+   attribute keep of adcBitClkDiv4 : signal is "true";
+   attribute keep of adcBitClkDiv7 : signal is "true";
+   attribute keep of adcFrame      : signal is "true";
+   attribute keep of adcBitClk     : signal is "true";
+   attribute keep of adcR          : signal is "true";
 
 begin
    -------------------------------------------------------------------------------------------------
@@ -189,7 +190,7 @@ begin
          cntRst     => axilR.lockedCountRst,
          dataOut    => open,
          cntOut     => lockedFallCount,
-         wrClk      => adcBitClkR,
+         wrClk      => adcBitClkDiv7,
          wrRst      => '0',
          rdClk      => axilClk,
          rdRst      => axilRst);
@@ -220,7 +221,7 @@ begin
          TPD_G    => TPD_G,
          STAGES_G => 2)
       port map (
-         clk     => adcBitClkR,
+         clk     => adcBitClkDiv7,
          dataIn  => axilR.invert,
          dataOut => invertSync);
 
@@ -316,14 +317,14 @@ begin
       port map (
          I  => adcSerial.dClkP,
          IB => adcSerial.dClkN,
-         O  => adcBitClkIoIn);
+         O  => adcBitClkIn);
 
    G_MMCM : if USE_MMCME_G = true generate
       ------------------------------------------
       -- Generate clocks from 156.25 MHz PGP  --
       ------------------------------------------
       -- clkIn     : 350.00 MHz PGP
-      -- clkOut(0) : 350.00 MHz adcBitClkIo clock
+      -- clkOut(0) : 350.00 MHz adcBitClk clock
       U_iserdesClockGen : entity surf.ClockManagerUltraScale
          generic map(
             TPD_G                  => 1 ns,
@@ -344,14 +345,14 @@ begin
             CLKOUT2_DIVIDE_G       => 14
         )
          port map(
-            clkIn     => adcBitClkIoIn,
+            clkIn     => adcBitClkIn,
             rstIn     => adcClkRst,
-            clkOut(0) => adcBitClkIo,
-            clkOut(1) => adcBitClkRD4,
-            clkOut(2) => adcBitClkR,
-            rstOut(0) => adcBitIoRst,
-            rstOut(1) => open,  -- fix this -----------------------
-            rstOut(2) => adcBitRst,
+            clkOut(0) => adcBitClk,
+            clkOut(1) => adcBitClkDiv4,
+            clkOut(2) => adcBitClkDiv7,
+            rstOut(0) => adcBitRst,
+            rstOut(1) => adcBitRstDiv4,
+            rstOut(2) => adcBitRstDiv7,
             locked    => open
          );
       
@@ -361,8 +362,8 @@ begin
       
       U_bitClkBufG : BUFG
          port map (
-            O => adcBitClkIo,
-            I => adcBitClkIoIn);
+            O => adcBitClk,
+            I => adcBitClkIn);
       
       U_PwrUpRst : entity surf.PwrUpRst
          generic map (
@@ -372,9 +373,9 @@ begin
             IN_POLARITY_G  => '1',
             OUT_POLARITY_G => '1')
          port map (
-            clk    => adcBitClkIo,
+            clk    => adcBitClk,
             arst   => adcClkRst,
-            rstOut => adcBitIoRst);
+            rstOut => adcBitRst);
       
    end generate G_NO_MMCM;
 
@@ -391,10 +392,12 @@ begin
          ADC_INVERT_CH_G   => '1',
          BIT_REV_G         => '0')
       port map (
-         adcClkRst     => adcBitRst,
-         dClk          => adcBitClkIo,      -- Data clock
-         dClkDiv4      => adcBitClkRD4,
-         dClkDiv7      => adcBitClkR,
+         dClk          => adcBitClk,      -- Data clock
+         dRst          => adcBitRst,
+         dClkDiv4      => adcBitClkDiv4,
+         dRstDiv4      => adcBitRstDiv4,
+         dClkDiv7      => adcBitClkDiv7,
+         dRstDiv7      => adcBitRstDiv7,
          sDataP        => adcSerial.fClkP,  -- Frame clock
          sDataN        => adcSerial.fClkN,
          loadDelay     => frameDelaySet,
@@ -417,7 +420,7 @@ begin
          wr_clk => axilClk,
          wr_en  => axilR.frameDelaySet,
          din    => axilR.delay,
-         rd_clk => adcBitClkRD4,
+         rd_clk => adcBitClkDiv4,
          rd_en  => '1',
          valid  => frameDelaySet,
          dout   => frameDelay);
@@ -440,10 +443,12 @@ begin
             ADC_INVERT_CH_G   => ADC_INVERT_CH_G(i),
             BIT_REV_G         => '1')
          port map (
-            adcClkRst     => adcBitRst,
-            dClk          => adcBitClkIo,       -- Data clock
-            dClkDiv4      => adcBitClkRD4,
-            dClkDiv7      => adcBitClkR,
+            dClk          => adcBitClk,      -- Data clock
+            dRst          => adcBitRst,
+            dClkDiv4      => adcBitClkDiv4,
+            dRstDiv4      => adcBitRstDiv4,
+            dClkDiv7      => adcBitClkDiv7,
+            dRstDiv7      => adcBitRstDiv7,
             sDataP        => adcSerial.chP(i),  -- Frame clock
             sDataN        => adcSerial.chN(i),
             loadDelay     => dataDelaySet(i),
@@ -467,7 +472,7 @@ begin
             wr_clk => axilClk,
             wr_en  => axilR.dataDelaySet(i),
             din    => axilR.delay,
-            rd_clk => adcBitClkRD4,
+            rd_clk => adcBitClkDiv4,
             rd_en  => '1',
             valid  => dataDelaySet(i),
             dout   => dataDelay(i));
@@ -526,11 +531,11 @@ begin
 
    end process adcComb;
 
-   adcSeq : process (adcBitClkR, adcBitRst) is
+   adcSeq : process (adcBitClkDiv7, adcBitRstDiv7) is
    begin
-      if (adcBitRst = '1') then
+      if (adcBitRstDiv7 = '1') then
          adcR <= ADC_REG_INIT_C after TPD_G;
-      elsif (rising_edge(adcBitClkR)) then
+      elsif (rising_edge(adcBitClkDiv7)) then
          adcR <= adcRin after TPD_G;
       end if;
    end process adcSeq;
@@ -556,8 +561,8 @@ begin
          ADDR_WIDTH_G  => 4,
          INIT_G        => "0")
       port map (
-         rst    => adcBitRst,
-         wr_clk => adcBitClkR,
+         rst    => adcBitRstDiv7,
+         wr_clk => adcBitClkDiv7,
          wr_en  => '1',                 --Always write data
          din    => fifoDataIn,
          rd_clk => adcStreamClk,
@@ -573,8 +578,8 @@ begin
          ADDR_WIDTH_G  => 4,
          INIT_G        => "0")
       port map (
-         rst    => adcBitRst,
-         wr_clk => adcBitClkR,
+         rst    => adcBitRstDiv7,
+         wr_clk => adcBitClkDiv7,
          wr_en  => '1',                 --Always write data
          din    => fifoDataIn,
          rd_clk => axilClk,
