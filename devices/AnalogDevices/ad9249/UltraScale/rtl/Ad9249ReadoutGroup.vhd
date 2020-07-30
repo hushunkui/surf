@@ -171,6 +171,7 @@ architecture rtl of Ad9249ReadoutGroup is
    attribute keep of adcBitClkR   : signal is "true";
    attribute keep of adcFrame     : signal is "true";
    attribute keep of adcBitClkIo  : signal is "true";
+   attribute keep of adcR         : signal is "true";
 
 begin
    -------------------------------------------------------------------------------------------------
