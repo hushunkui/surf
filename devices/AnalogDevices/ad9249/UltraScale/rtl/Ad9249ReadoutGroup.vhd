@@ -178,12 +178,9 @@ architecture rtl of Ad9249ReadoutGroup is
    signal invertSync    : sl;
    
    signal slipSync      : slv(3 downto 0);
-
-   attribute keep of adcBitClkDiv4 : signal is "true";
-   attribute keep of adcBitClkDiv7 : signal is "true";
-   attribute keep of adcFrame      : signal is "true";
-   attribute keep of adcBitClk     : signal is "true";
-   attribute keep of adcR          : signal is "true";
+   
+   attribute KEEP_HIERARCHY of AdcClk_I_Ibufds  : label is "TRUE";
+   attribute dont_touch of adcDclk              : signal is "TRUE";
 
 begin
    -------------------------------------------------------------------------------------------------
@@ -319,22 +316,21 @@ begin
    end process axilSeq;
 
 
+   AdcClk_I_Ibufds : IBUFDS
+   generic map (
+      DQS_BIAS => "FALSE"
+   )
+   port map (
+      I  => adcSerial.dClkP,
+      IB => adcSerial.dClkN,
+      O  => adcDclk
+   );
 
    -------------------------------------------------------------------------------------------------
    -- Create Clocks
    -------------------------------------------------------------------------------------------------
 
    G_MMCM : if USE_MMCME_G = true generate
-      
-      AdcClk_I_Ibufds : IBUFDS
-      generic map (
-         DQS_BIAS => "FALSE"
-      )
-      port map (
-         I  => adcSerial.dClkP,
-         IB => adcSerial.dClkN,
-         O  => adcDclk
-      );
       
       
       ------------------------------------------
