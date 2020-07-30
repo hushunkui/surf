@@ -44,24 +44,34 @@ entity Ad9249ReadoutGroup is
       SIM_SPEEDUP_G     : boolean              := false);
    port (
       -- Master system clock, 125Mhz
-      axilClk : in sl;
-      axilRst : in sl;
+      axilClk           : in sl;
+      axilRst           : in sl;
 
       -- Axi Interface
-      axilWriteMaster : in  AxiLiteWriteMasterType;
-      axilWriteSlave  : out AxiLiteWriteSlaveType;
-      axilReadMaster  : in  AxiLiteReadMasterType;
-      axilReadSlave   : out AxiLiteReadSlaveType;
+      axilWriteMaster   : in  AxiLiteWriteMasterType;
+      axilWriteSlave    : out AxiLiteWriteSlaveType;
+      axilReadMaster    : in  AxiLiteReadMasterType;
+      axilReadSlave     : out AxiLiteReadSlaveType;
 
       -- Reset for adc deserializer (axilClk domain)
-      adcClkRst : in sl;
+      adcClkRst         : in sl;
+      
+      -- clocks must be provided with USE_MMCME_G = false
+      -- this option is necessary if there is many ADCs
+      -- one external MMCM should be instantiated to be used with all Ad9249ReadoutGroups
+      adcBitClkIn       : in sl;    -- 350.0 MHz
+      adcBitClkDiv4In   : in sl;    --  87.5 MHz
+      adcBitClkDiv7In   : in sl;    --  50.0 MHz
+      adcBitRstIn       : in sl;
+      adcBitRstDiv4In   : in sl;
+      adcBitRstDiv7In   : in sl;
 
       -- Serial Data from ADC
-      adcSerial : in Ad9249SerialGroupType;
+      adcSerial         : in Ad9249SerialGroupType;
 
       -- Deserialized ADC Data
-      adcStreamClk : in  sl;
-      adcStreams   : out AxiStreamMasterArray(NUM_CHANNELS_G-1 downto 0) :=
+      adcStreamClk      : in  sl;
+      adcStreams        : out AxiStreamMasterArray(NUM_CHANNELS_G-1 downto 0) :=
       (others => axiStreamMasterInit((false, 2, 8, 0, TKEEP_NORMAL_C, 0, TUSER_NORMAL_C))));
 end Ad9249ReadoutGroup;
 
@@ -134,7 +144,7 @@ architecture rtl of Ad9249ReadoutGroup is
 
 
    -- Local Signals
-   signal adcBitClkIn   : sl;
+   signal adcDclk       : sl;
    signal adcBitClk     : sl;
    signal adcBitClkDiv7 : sl;
    signal adcBitClkDiv4 : sl;
@@ -313,21 +323,27 @@ begin
    -------------------------------------------------------------------------------------------------
    -- Create Clocks
    -------------------------------------------------------------------------------------------------
-   AdcClk_I_Ibufds : IBUFDS
+
+   G_MMCM : if USE_MMCME_G = true generate
+      
+      AdcClk_I_Ibufds : IBUFDS
       generic map (
-         DQS_BIAS => "FALSE"            -- (FALSE, TRUE)
-         )
+         DQS_BIAS => "FALSE"
+      )
       port map (
          I  => adcSerial.dClkP,
          IB => adcSerial.dClkN,
-         O  => adcBitClkIn);
-
-   G_MMCM : if USE_MMCME_G = true generate
+         O  => adcDclk
+      );
+      
+      
       ------------------------------------------
-      -- Generate clocks from 156.25 MHz PGP  --
+      -- Generate clocks from ADC incoming clock
       ------------------------------------------
-      -- clkIn     : 350.00 MHz PGP
+      -- clkIn     : 350.00 MHz ADC clock
       -- clkOut(0) : 350.00 MHz adcBitClk clock
+      -- clkOut(1) :  87.50 MHz adcBitClkDiv4 clock
+      -- clkOut(2) :  50.00 MHz adcBitClkDiv7 clock
       U_iserdesClockGen : entity surf.ClockManagerUltraScale
          generic map(
             TPD_G                  => 1 ns,
@@ -348,7 +364,7 @@ begin
             CLKOUT2_DIVIDE_G       => 14
         )
          port map(
-            clkIn     => adcBitClkIn,
+            clkIn     => adcDclk,
             rstIn     => '0',
             clkOut(0) => adcBitClk,
             clkOut(1) => adcBitClkDiv4,
@@ -363,22 +379,12 @@ begin
    
    G_NO_MMCM : if USE_MMCME_G = false generate
       
-      U_bitClkBufG : BUFG
-         port map (
-            O => adcBitClk,
-            I => adcBitClkIn);
-      
-      U_PwrUpRst : entity surf.PwrUpRst
-         generic map (
-            TPD_G          => TPD_G,
-            SIM_SPEEDUP_G  => SIM_SPEEDUP_G,
-            DURATION_G     => 511,
-            IN_POLARITY_G  => '1',
-            OUT_POLARITY_G => '1')
-         port map (
-            clk    => adcBitClk,
-            arst   => adcClkRst,
-            rstOut => adcBitRst);
+      adcBitClk      <= adcBitClkIn;
+      adcBitClkDiv4  <= adcBitClkDiv4In;
+      adcBitClkDiv7  <= adcBitClkDiv7In;
+      adcBitRst      <= adcBitRstIn;
+      adcBitRstDiv4  <= adcBitRstDiv4In;
+      adcBitRstDiv7  <= adcBitRstDiv7In;
       
    end generate G_NO_MMCM;
 
