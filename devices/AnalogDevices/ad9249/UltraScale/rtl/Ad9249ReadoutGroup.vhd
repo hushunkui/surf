@@ -38,7 +38,6 @@ entity Ad9249ReadoutGroup is
       D_DELAY_CASCADE_G : boolean              := false;
       F_DELAY_CASCADE_G : boolean              := false;
       IDELAYCTRL_FREQ_G : real                 := 200.0;
-      DELAY_VALUE_G     : natural              := 1250;
       DEFAULT_DELAY_G   : slv(8 downto 0)      := (others => '0');
       ADC_INVERT_CH_G   : slv(7 downto 0)      := "00000000";
       USE_MMCME_G       : boolean              := false;
@@ -135,7 +134,6 @@ architecture rtl of Ad9249ReadoutGroup is
 
 
    -- Local Signals
-   signal tmpAdcClk     : sl;
    signal adcBitClkIoIn : sl;
    signal adcBitClkIo   : sl;
    signal adcBitClkR    : sl;
@@ -333,7 +331,7 @@ begin
             INPUT_BUFG_G           => true,
             FB_BUFG_G              => true,
             RST_IN_POLARITY_G      => '1',     -- '0' for active low
-            NUM_CLOCKS_G           => 1,
+            NUM_CLOCKS_G           => 3,
             -- MMCM attributes
             BANDWIDTH_G            => "OPTIMIZED",
             CLKIN_PERIOD_G         => 2.85,    -- Input period in ns );
@@ -342,33 +340,29 @@ begin
             CLKFBOUT_MULT_G        => 5,
             CLKOUT0_DIVIDE_F_G     => 1.0,
             CLKOUT0_DIVIDE_G       => 2,
-            CLKOUT0_PHASE_G        => 0.0,
-            CLKOUT0_DUTY_CYCLE_G   => 0.5,
-            CLKOUT0_RST_HOLD_G     => 3,
-            CLKOUT0_RST_POLARITY_G => '1')
+            CLKOUT1_DIVIDE_G       => 8,
+            CLKOUT2_DIVIDE_G       => 14
+        )
          port map(
             clkIn     => adcBitClkIoIn,
             rstIn     => adcClkRst,
-            clkOut(0) => tmpAdcClk,
+            clkOut(0) => adcBitClkIo,
+            clkOut(1) => adcBitClkRD4,
+            clkOut(2) => adcBitClkR,
             rstOut(0) => adcBitIoRst,
+            rstOut(1) => open,  -- fix this -----------------------
+            rstOut(2) => adcBitRst,
             locked    => open
          );
-      
-      U_bitClkBufG : BUFG
-         port map (
-            O => adcBitClkIo,
-            I => tmpAdcClk);
       
    end generate G_MMCM;
    
    G_NO_MMCM : if USE_MMCME_G = false generate
       
-      tmpAdcClk <= adcBitClkIoIn;
-      
       U_bitClkBufG : BUFG
          port map (
             O => adcBitClkIo,
-            I => tmpAdcClk);
+            I => adcBitClkIoIn);
       
       U_PwrUpRst : entity surf.PwrUpRst
          generic map (
@@ -383,48 +377,6 @@ begin
             rstOut => adcBitIoRst);
       
    end generate G_NO_MMCM;
-
-   
-
-   -- Regional clock
-   U_AdcBitClkR : BUFGCE_DIV
-      generic map (
-         BUFGCE_DIVIDE   => 7,          -- 1-8
-         -- Programmable Inversion Attributes: Specifies built-in programmable inversion on specific pins
-         IS_CE_INVERTED  => '0',        -- Optional inversion for CE
-         IS_CLR_INVERTED => '0',        -- Optional inversion for CLR
-         IS_I_INVERTED   => '0'         -- Optional inversion for I
-         )
-      port map (
-         I   => adcBitClkIo,
-         O   => adcBitClkR,
-         CE  => '1',
-         CLR => '0');
-
-   -- Regional clock
-   U_AdcBitClkRD4 : BUFGCE_DIV
-      generic map (
-         BUFGCE_DIVIDE   => 4,          -- 1-8
-         -- Programmable Inversion Attributes: Specifies built-in programmable inversion on specific pins
-         IS_CE_INVERTED  => '0',        -- Optional inversion for CE
-         IS_CLR_INVERTED => '0',        -- Optional inversion for CLR
-         IS_I_INVERTED   => '0'         -- Optional inversion for I
-         )
-      port map (
-         I   => adcBitClkIo,
-         O   => adcBitClkRD4,
-         CE  => '1',
-         CLR => '0');
-
-   -- Regional clock reset
-   ADC_BITCLK_RST_SYNC : entity surf.RstSync
-      generic map (
-         TPD_G           => TPD_G,
-         RELEASE_DELAY_G => 5)
-      port map (
-         clk      => adcBitClkR,
-         asyncRst => adcBitIoRst,
-         syncRst  => adcBitRst);
 
    -------------------------------------------------------------------------------------------------
    -- Deserializers
