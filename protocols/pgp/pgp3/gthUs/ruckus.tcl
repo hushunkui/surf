@@ -2,7 +2,7 @@
 source -quiet $::env(RUCKUS_DIR)/vivado_proc.tcl
 
 # Load Source Code
-if { $::env(VIVADO_VERSION) >= 2017.3 } {
+if { $::env(VIVADO_VERSION) >= 2020.1 } {
 
    # Load Source Code
    loadSource -lib surf -dir "$::DIR_PATH/rtl"
@@ -17,5 +17,5 @@ if { $::env(VIVADO_VERSION) >= 2017.3 } {
    # loadIpCore -path "$::DIR_PATH/ip/Pgp3GthUsIp3G/Pgp3GthUsIp3G.xci"
 
 } else {
-   puts "\n\nWARNING: $::DIR_PATH requires Vivado 2017.3 (or later)\n\n"
+   puts "\n\nWARNING: $::DIR_PATH requires Vivado 2020.1 (or later)\n\n"
 }
